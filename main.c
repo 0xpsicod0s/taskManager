@@ -5,6 +5,9 @@
 #include <dirent.h>
 #include <pthread.h>
 #include <time.h>
+#include <termios.h>
+#include <fcntl.h>
+#include <signal.h>
 
 void menu();
 void getInformation(int*, int);
@@ -18,7 +21,6 @@ char *formattedDate(char *, char *, char *);
 void cleanName(char *);
 
 long int getTotalCpuTime();
-long int getWorkJiffies();
 
 void waitMs(int);
 
@@ -35,19 +37,89 @@ typedef struct {
 } procInfo;
 
 float getPercentageOfMemUsage(long int);
-void getCpuUsageOfProcess(cpuT *);
+void *getCpuUsageOfProcess(cpuT *);
 long int getProcessCPUTime(int);
 procInfo *readStat(int, long int *);
 
+// struct termios originalTermios;
+
+// void setNonBlockingInput();
+// void restoreTerminal();
+// void *listenForKey(void*);
+
+// volatile int running = 1;
+
 int main(void) {
-    // while (1) {
-        // system("clear");
+    // setNonBlockingInput();
+    // atexit(restoreTerminal);
+    
+    // int flag = 1; // variavel sentinela para o while
+
+    // pthread_t keyThread;
+    // pthread_create(&keyThread, NULL, listenForKey, (void *) &flag);
+
+    while (1) {
         printf("   PID  USER    PRI  NI  VIRT  RES  SHR  S   CPU%%  MEM%%   TIME+   Name\n");
         getFolders();
-        // sleep(3);
-    // }
+        sleep(5);
+        system("clear");
+    }
+
+    // running = 0;
+    // pthread_join(keyThread, NULL);
     return 0;
 }
+
+// void setNonBlockingInput() {
+//     tcgetattr(STDIN_FILENO, &originalTermios);
+//     struct termios t = originalTermios;
+//     t.c_lflag &= ~(ICANON | ECHO);
+//     tcsetattr(STDIN_FILENO, TCSANOW, &t);
+//     fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
+// }
+
+// void restoreTerminal() {
+//     tcsetattr(STDIN_FILENO, TCSANOW, &originalTermios);
+// }
+
+// TODO: corrigir e finalizar a função para encerrar o processo com o PID informado pelo usuário
+// void *listenForKey(void *arg) {
+//     int *flag = (int *)arg;
+//     char c;
+
+//     while (running) {
+//         c = getchar();
+//         if (c == 'k') {
+//             restoreTerminal();
+
+//             int PID;
+//             char input[64];
+//             printf("\nDigite o PID do processo a ser finalizado: ");
+//             fflush(stdout);
+
+//             if (fgets(input, sizeof(input), stdin) != NULL) {
+//                 if (sscanf(input, "%d", &PID) == 1) {
+//                     printf("PID: %d\n", PID);
+//                     if (kill(PID, SIGTERM) == 0) {
+//                         printf("Processo %d finalizado com sucesso.\n", PID);
+//                     } else {
+//                         perror("Erro ao finalizar processo");
+//                     }
+//                 } else {
+//                     printf("Entrada inválida.\n");
+//                 }
+//             }
+
+//             setNonBlockingInput();
+//         } else if (c == 'q') {
+//             *flag = 0;
+//         }
+
+//         usleep(50000);
+//     }
+
+//     return NULL;
+// }
 
 void getFolders() {
     DIR *directoryProc;
@@ -99,7 +171,7 @@ procInfo *readStat(int PID, long int *vmRSS) {
                 &(procI->niceValue), &startTime, &virtMem, vmRSS);
     
     sharedMem = getSharedMemory(PID);
-    // procI->username = getUser(PID);
+    procI->username = getUser(PID);
     procI->executionTime = getExecutionTime(startTime);
     procI->virtMemory = formattedMemoryDigits(virtMem);
     procI->RSS = formattedMemoryDigits(*vmRSS);
@@ -134,12 +206,12 @@ void getInformation(int *PIDs, int PIDquantity) {
         procInfo *procI = readStat(PID, &vmRSS);
         float memUse = getPercentageOfMemUsage(vmRSS);
 
-        printf("%5ld   %s %4ld %3ld  %s  %3s   %s %2c %5.1f   %.1f    %s    %s\n", 
+        printf("%5d   %s %4ld %3ld  %s  %3s   %s %2c %5.1f   %.1f    %s    %s\n", 
                 PID, procI->username, procI->priority,
                 procI->niceValue, procI->virtMemory, procI->RSS,
                 procI->SHR, procI->state, *(savedCpuUse+i), memUse,
                 procI->executionTime, procI->name);
-        // free(procI->username);
+        free(procI->username);
         free(procI->executionTime);
         free(procI->virtMemory);
         free(procI->RSS);
@@ -211,37 +283,37 @@ long int getSharedMemory(int PID) {
 
 char *getUser(int PID) {
     int userUID = getUserUID(PID);
-    printf("UserUID: %d\n", userUID);
-    FILE *fp = fopen("/etc/passwd", "r");
-    printf("fp is null? %d\n", fp == NULL);
-    if (fp == NULL || userUID == -1) {
+    if (userUID == -1) {
         char *err = malloc(4);
-        char strErr[] = "[!]";
-        memcpy(err, strErr, strlen(strErr));
+        strcpy(err, "[!]");
         fprintf(stderr, "[!] - Houve um erro ao localizar o usuario do processo: %d\n", PID);
         return err;
     }
 
-    while (!feof(fp)) {
+    FILE *fp = fopen("/etc/passwd", "r");
+    if (fp == NULL) {
+        char *err = malloc(4);
+        strcpy(err, "[!]");
+        fprintf(stderr, "[!] - Erro ao abrir /etc/passwd\n");
+        return err;
+    }
+
+    char line[1024];
+    while (fgets(line, sizeof(line), fp)) {
         char *bufferUsername = malloc(50);
-        char bufferUID[50];
-        char line[1024];
-        char *tok;
-        
-        fgets(line, sizeof(line), fp);
-        tok = strtok(line, ":");
+        char bufferUID[50] = "";
+        char *tok = strtok(line, ":");
 
         int field = 0;
-        while (tok != 0) {
+        while (tok != NULL) {
             if (field == 0) strcpy(bufferUsername, tok);
             if (field == 2) strcpy(bufferUID, tok);
-            tok = strtok(0, ":");
+            tok = strtok(NULL, ":");
             field++;
         }
 
         if (atoi(bufferUID) == userUID) {
             size_t usernameLength = strlen(bufferUsername);
-
             if (usernameLength > 4) {
                 strncpy(bufferUsername + 4, "..", 2);
                 bufferUsername[6] = '\0';
@@ -257,8 +329,14 @@ char *getUser(int PID) {
             fclose(fp);
             return bufferUsername;
         }
+
+        free(bufferUsername);
     }
+
     fclose(fp);
+    char *notFound = malloc(4);
+    strcpy(notFound, "[?]");
+    return notFound;
 }
 
 int getUserUID(int PID) {
@@ -282,7 +360,7 @@ int getUserUID(int PID) {
     return -1;
 }
 
-void getCpuUsageOfProcess(cpuT *input) {
+void *getCpuUsageOfProcess(cpuT *input) {
     long matriz[2][2];
 
     matriz[0][0] = getTotalCpuTime();
@@ -307,7 +385,7 @@ long int getProcessCPUTime(int PID) {
 
     FILE *fp = fopen(directory, "r");
     if (fp == NULL) {
-        fprintf(stderr, "[!] - Erro ao obter uso de CPU de um dos processos\n");
+        fprintf(stderr, "[!] - Erro ao obter uso de CPU do processo: %d\n", PID);
         return 1;
     }
 
@@ -321,7 +399,7 @@ long int getProcessCPUTime(int PID) {
 long int getTotalCpuTime() {
     FILE *fp = fopen("/proc/stat", "r");
     if (fp == NULL) {
-        fprintf(stderr, "Erro ao obter porcentagem de uso da CPU");
+        fprintf(stderr, "Erro ao obter uso de CPU\n");
         return 1;
     }
     int user, nice, system, 
@@ -333,18 +411,6 @@ long int getTotalCpuTime() {
     
     return user + nice + system + idle +
         iowait + irq + softirq + steal;
-}
-
-long int getWorkJiffies() {
-    FILE *fp = fopen("/proc/stat", "r");
-    if (fp == NULL) {
-        fprintf(stderr, "Erro ao obter porcentagem de uso da CPU");
-        return 1;
-    }
-
-    int user, nice, system;
-    fscanf(fp, "%*s %d %d %d", &user, &nice, &system);
-    return user + nice + system;
 }
 
 
