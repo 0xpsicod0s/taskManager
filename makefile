@@ -1,5 +1,11 @@
-all: 
-	gcc main.c -o main -Wformat=0 && sudo ./main
+CC = gcc
+CFLAGS = -Wformat=0 -pthread
+TARGET = monitor
 
-rm:
-	rm main
+all: $(TARGET)
+
+$(TARGET): main.c
+	$(CC) $(CFLAGS) -o $(TARGET) main.c
+
+clean:
+	rm -f $(TARGET)
