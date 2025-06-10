@@ -5,9 +5,9 @@
 #include <dirent.h>
 #include <pthread.h>
 #include <time.h>
-#include <termios.h>
-#include <fcntl.h>
-#include <signal.h>
+// #include <termios.h>
+// #include <fcntl.h>
+// #include <signal.h>
 
 void menu();
 void getInformation(int*, int);
